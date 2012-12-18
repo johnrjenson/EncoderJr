@@ -1,3 +1,7 @@
+#IDE Specific Files
+.idea
+*.iml
+
 *.class
 
 # Package Files #
