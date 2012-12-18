@@ -1,4 +1,4 @@
-package org.jr.encode;
+package com.github.johnrjenson.encoderjr;
 
 import static java.nio.file.StandardWatchEventKinds.ENTRY_CREATE;
 import static java.nio.file.StandardWatchEventKinds.ENTRY_DELETE;

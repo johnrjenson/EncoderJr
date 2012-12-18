@@ -33,7 +33,7 @@
 		<jar destfile="EncoderJr.jar" basedir="${build.dir}" compress="false">
 			<manifest>
 				<attribute name="Manifest-Version" value="Manifest-Version: 1.0"/>
-				<attribute name="Main-Class" value="org.jr.encode.EncoderJrMain"/>
+				<attribute name="Main-Class" value="com.github.johnrjenson.encoderjr.EncoderJrMain"/>
 			</manifest>
 		</jar>
 	</target>
