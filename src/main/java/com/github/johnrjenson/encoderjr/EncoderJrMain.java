@@ -26,6 +26,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @author jensonjr
@@ -33,7 +34,8 @@ import java.util.Properties;
 public class EncoderJrMain implements Runnable {
 
 	private static String ORIGINALS_DIR_NAME;
-	private static String ORIGINALS_EXT = ".MOV";
+	private static String[] EXTENTIONS;
+	private static int IDLE_MINUTES = -1;
 
 	private static boolean debug = false;
 
@@ -62,10 +64,16 @@ public class EncoderJrMain implements Runnable {
 
 		String userDir = System.getProperty("user.home");
 		String dirsString = autoEncodeProperties.getProperty("movie.dirs.to.scan");
+		EXTENTIONS = autoEncodeProperties.getProperty("movie.exts.to.scan").split(",");
 		userDir = userDir.replaceAll("\\\\", "\\\\\\\\");
 		dirsString = dirsString.replaceAll("\\{user\\.home\\}", userDir);
 		System.out.println(dirsString);
 		String watchDirs[] = dirsString.split(";");
+
+		String idleMinutesProperty = autoEncodeProperties.getProperty("idle.time.minutes");
+		if(idleMinutesProperty != null) {
+			IDLE_MINUTES = Integer.parseInt(idleMinutesProperty);
+		}
 
 		EncoderJrMain encoder = new EncoderJrMain(watchDirs, autoEncodeProperties);
 		if(debug) {
@@ -111,7 +119,7 @@ public class EncoderJrMain implements Runnable {
 			@Override
 			public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
 				String pathToFile = file.toString();
-				if(pathToFile.indexOf(ORIGINALS_DIR_NAME) == -1 && pathToFile.toUpperCase().endsWith(ORIGINALS_EXT.toUpperCase())) {
+				if(pathToFile.indexOf(ORIGINALS_DIR_NAME) == -1 && endsWithAny(pathToFile, EXTENTIONS)) {
 					files.add(file);
 				}
 				return FileVisitResult.CONTINUE;
@@ -120,6 +128,17 @@ public class EncoderJrMain implements Runnable {
 
 		return files;
 	}
+
+	private boolean endsWithAny(String value, String[] endsWith) {
+		String upper = value.toUpperCase();
+		for(String ending : endsWith) {
+			if(upper.endsWith(ending.toUpperCase())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private void registerDir(Path dir) throws IOException {
 		if(debug) {
 			System.out.println(dir);
@@ -136,13 +155,27 @@ public class EncoderJrMain implements Runnable {
 		}
 	}
 
+	private boolean newFiles = false;
 	public void run() {
 		while (true) {
 
-			// wait for key to be signalled
 			WatchKey key;
 			try {
-				key = watchService.take(); // blocking call
+				if(IDLE_MINUTES >= 0) {
+					key = watchService.poll(1, TimeUnit.MINUTES); // blocks for only the allotted time
+					if(key == null) {
+						// nothing new has come in for longer than the idle time so kick off idle command
+						try {
+							executeCommand(buildIdleCommand());
+						} catch(IOException e) {
+							e.printStackTrace();
+						}
+						key = watchService.take(); // blocking call
+					}
+				} else {
+					key = watchService.take(); // blocking call
+				}
+
 			} catch (InterruptedException x) {
 				x.printStackTrace();
 				return;
@@ -235,9 +268,13 @@ public class EncoderJrMain implements Runnable {
 
 	private void encodeMovieIfNeeded(Path originalFile) throws IOException, InterruptedException {
 		String originalFileName = originalFile.getFileName().toString();
-		if(originalFileName.toUpperCase().endsWith(ORIGINALS_EXT)) {
+		if(endsWithAny(originalFileName,EXTENTIONS)) {
 			Path parentDir = originalFile.getParent();
-			Path targetFile = parentDir.resolve(originalFileName.replaceAll("\\"+ORIGINALS_EXT.toLowerCase(), ".m4v").replaceAll("\\"+ORIGINALS_EXT.toUpperCase(), ".m4v"));
+			String newFileName = originalFileName;
+			for(String ext : EXTENTIONS) {
+				newFileName = newFileName.replaceAll("\\" + ext.toLowerCase(), ".m4v").replaceAll("\\" + ext.toUpperCase(), ".m4v");
+			}
+			Path targetFile = parentDir.resolve(newFileName);
 			if(! targetFile.toFile().exists()) {
 				// the file might not be completely there yet especially if it is large and takes a while to copy from the SD card
 				waitForFileToBeAvailable(originalFile);
@@ -246,7 +283,7 @@ public class EncoderJrMain implements Runnable {
 
 				// build and execute command
 				String encoderCommand = buildEncoderCommand(originalFile, tempFile);
-				int exitCode = executeEncoderCommand(encoderCommand);
+				int exitCode = executeCommand(encoderCommand);
 
 				// rename temp file
 				FileTime lastModifiedTime = Files.getLastModifiedTime(originalFile);
@@ -305,8 +342,18 @@ public class EncoderJrMain implements Runnable {
 		return encoderCommand;
 	}
 
-	private int executeEncoderCommand(String handbreakCommand) throws InterruptedException, IOException {
-		Process process = Runtime.getRuntime().exec(handbreakCommand);
+	private String buildIdleCommand() {
+		String idleCommand = autoEncodeProperties.getProperty("idle.command");
+
+		if(debug) {
+			System.out.println(idleCommand);
+		}
+
+		return idleCommand;
+	}
+
+	private int executeCommand(String command) throws InterruptedException, IOException {
+		Process process = Runtime.getRuntime().exec(command);
 		return logOutputAndWaitForTermination(process);
 	}
 
